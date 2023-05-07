@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "byond_fn",
+    "byond_fn_impl"
+]

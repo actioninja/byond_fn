@@ -1,0 +1,13 @@
+[package]
+name = "byond_fn"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+byond_fn_impl = { version = "0.1.0", path = "../byond_fn_impl" }
+
+[features]
+allow_other_arch = ["byond_fn_impl/allow_other_arch"]
+ffi_v2 = ["byond_fn_impl/ffi_v2"]
