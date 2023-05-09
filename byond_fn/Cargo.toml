@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 byond_fn_impl = { version = "0.1.0", path = "../byond_fn_impl" }
-castaway = "0.2.2"
 serde = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
 

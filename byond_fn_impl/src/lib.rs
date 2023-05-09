@@ -8,9 +8,8 @@ use proc_macro2::{Ident, TokenStream as TokenStream2};
 use proc_macro_error::{abort, proc_macro_error};
 use quote::quote;
 
-use syn::parse::{Parse, Parser};
 use syn::spanned::Spanned;
-use syn::{Block, FnArg, ItemFn, Signature, Visibility};
+use syn::{ItemFn, Signature};
 
 pub(crate) struct FFITokens {
     fn_args: TokenStream2,
@@ -42,7 +41,7 @@ fn byond_fn2(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
         return_type,
         return_value,
     } = match args.to_string().as_str() {
-        "default" | "str" => str_ffi::tokens(inputs.clone().iter()),
+        "default" | "str" => str_ffi::tokens(inputs.iter()),
         #[cfg(feature = "ffi_v2")]
         "v2" => {
             unimplemented!("Not yet implemented")
@@ -88,16 +87,6 @@ fn byond_fn2(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
     };
 
     tokens
-}
-
-#[cfg(any(target_pointer_width = "32", feature = "allow_other_arch"))]
-fn check_arch() -> bool {
-    true
-}
-
-#[cfg(all(not(target_pointer_width = "32"), not(feature = "allow_other_arch")))]
-fn check_arch() -> bool {
-    false
 }
 
 #[cfg(test)]

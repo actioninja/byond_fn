@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "byond_fn",
-    "byond_fn_impl"
+    "byond_fn_impl",
+    "example_crate"
 ]

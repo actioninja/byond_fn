@@ -1,9 +1,7 @@
-use castaway::match_type;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::env::VarsOs;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::slice;
 
