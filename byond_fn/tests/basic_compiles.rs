@@ -13,5 +13,15 @@ pub fn example_args(arg1: u8, arg2: u8) -> u8 {
     arg1 + arg2
 }
 
+#[byond_fn]
+pub fn example_optional_params(arg1: u8, arg2: Option<u8>) -> u8 {
+    arg1 + arg2.unwrap_or(0)
+}
+
+#[byond_fn]
+pub fn shouldnt_compile(arg1: Option<u8>, arg2: u8) -> u8 {
+    arg1.unwrap_or(0) + arg2
+}
+
 #[test]
 fn compiles() {}

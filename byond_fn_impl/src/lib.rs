@@ -9,7 +9,7 @@ use proc_macro_error::{abort, proc_macro_error};
 use quote::quote;
 
 use syn::spanned::Spanned;
-use syn::{ItemFn, Signature};
+use syn::{FnArg, ItemFn, Signature, Type};
 
 pub(crate) struct FFITokens {
     fn_args: TokenStream2,
@@ -41,7 +41,7 @@ fn byond_fn2(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
         return_type,
         return_value,
     } = match args.to_string().as_str() {
-        "default" | "str" => str_ffi::tokens(inputs.iter()),
+        "default" | "str" => str_ffi::tokens(inputs.clone().iter()),
         #[cfg(feature = "ffi_v2")]
         "v2" => {
             unimplemented!("Not yet implemented")
@@ -61,6 +61,38 @@ fn byond_fn2(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
             )
         }
     };
+
+    //verify optional params are at the tail of the sig
+    let mut optional_encountered = false;
+    for arg in inputs.iter() {
+        let arg = match arg {
+            FnArg::Receiver(_) => abort!(
+                arg,
+                "`byond_fn` only supports bare, non associated functions"
+            ),
+            FnArg::Typed(a) => a,
+        };
+
+        let arg_type = *arg.ty.clone();
+        match arg_type {
+            Type::Path(path) => {
+                let path = path.path;
+                if let Some(ident) = path.get_ident() {
+                    if *ident == "Option" {
+                        optional_encountered = true;
+                    }
+                }
+            }
+            _ => {
+                if optional_encountered {
+                    abort!(
+                        arg,
+                        "All optional parameters must be at the end of the signature"
+                    );
+                }
+            }
+        }
+    }
 
     let fn_sig = quote! {
         #[no_mangle]

@@ -1,3 +1,39 @@
+//! A macro crate for defining functions callable from BYOND easily and ergonomically
+//!
+//! ## Usage
+//!
+//!
+//! ## Optional Paremeters
+//!
+//! ## JSON Transport
+//!
+//! Because string only transport limits the capability of transporting data, this crate also
+//! supports JSON transport.
+//!
+//! JSON Transport is enabled via a feature flag, `json_transport`. This feature flag is enabled by
+//! default.
+//!
+//! To utilize JSON transport, parameters should use the `Json` wrapper type:
+//!
+//! ```
+//! use byond_fn::byond_fn;
+//!
+//! #[byond_fn]
+//! pub fn add(left: Json<usize>, right: Json<usize>) -> usize {
+//!    left.0 + right.0
+//! }
+//! ```
+//!
+//! parameters that use the `Json` wrapper type will attempt to deserialize the parameter from JSON
+//! into the provided type. Return types that use the `Json` wrapper type will be serialized into
+//! JSON before being sent to BYOND.
+//!
+//! If this fails, the function will early return an error string to BYOND.
+//!
+//!
+//! `Json` requires the serde `Serialize` and `Deserialize` traits to be implemented for the type.
+//!
+
 #[cfg(feature = "ffi_v2")]
 pub mod ffi_v2;
 pub mod str_ffi;
