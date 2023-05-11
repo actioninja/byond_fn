@@ -29,7 +29,7 @@ const FFI_V2_DESC: &str =
     "\"v2\": New FFI Format added with BYOND 515 that uses `ByondType` as the FFI medium";
 
 fn byond_fn2(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
-    let ItemFn { sig, block, .. }: ItemFn = syn::parse2(input).unwrap();
+    let original_fn: ItemFn = syn::parse2(input).unwrap();
 
     let args: Ident = syn::parse2(args.clone()).unwrap_or(Ident::new("default", args.span()));
 

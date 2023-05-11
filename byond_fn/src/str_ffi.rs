@@ -2,7 +2,10 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
+use std::fmt::Display;
+use std::ptr::write;
 use std::slice;
 
 // BYOND doesn't like receiving back an empty string, so throw back just a null byte instead.
@@ -15,11 +18,11 @@ thread_local! {
 }
 
 /// If a string returned is prefixed with this, it indicates that an error occurred.
-pub const ERR_HEADER: &str = "@@BYOND_FFI_ERROR@@:";
+pub const ERR_HEADER: &str = "@@BYOND_FFI_ERROR@@";
 
 pub const ERR_WRONG_ARG_COUNT: &str = "Wrong number of arguments passed to function";
 pub const ERR_ARG_PARSE: &str = "Failed to parse argument";
-pub const ERR_RETURN_PARSE: &str = "Failed to parse return value";
+pub const ERR_RETURN_STR: &str = "Failed to serialize return value";
 
 #[cfg(feature = "json_transport")]
 pub const ERR_RETURN_SERIALIZE: &str = "Failed to serialize return value";
@@ -43,11 +46,31 @@ pub unsafe fn parse_str_args<'a>(argc: c_int, argv: *const *const c_char) -> Vec
         .collect()
 }
 
-pub fn byond_return(value: impl StrReturn) -> *const c_char {
-    let value = value.to_return();
+pub fn byond_return(value: impl StrReturn) -> Result<*const c_char, TransportError> {
+    match value.to_return() {
+        Ok(value) => match value {
+            None => Ok(&EMPTY_STRING),
+            Some(vec) if vec.is_empty() => Ok(&EMPTY_STRING),
+            Some(vec) => RETURN_STRING.with(|cell| {
+                // Panicking over an FFI boundary is bad form, so if a NUL ends up
+                // in the result, just truncate.
+                let cstring = CString::new(vec).unwrap_or_else(|err| {
+                    let post = err.nul_position();
+                    let mut vec = err.into_vec();
+                    vec.truncate(post);
+                    CString::new(vec).unwrap_or_default()
+                });
+                cell.replace(cstring);
+                Ok(cell.borrow().as_ptr())
+            }),
+        },
+        Err(err) => Err(err),
+    }
+
+    /*
     match value {
-        None => &EMPTY_STRING,
-        Some(vec) if vec.is_empty() => &EMPTY_STRING,
+        None => Ok(&EMPTY_STRING),
+        Some(vec) if vec.is_empty() => Ok(&EMPTY_STRING),
         Some(vec) => RETURN_STRING.with(|cell| {
             // Panicking over an FFI boundary is bad form, so if a NUL ends up
             // in the result, just truncate.
@@ -61,37 +84,66 @@ pub fn byond_return(value: impl StrReturn) -> *const c_char {
             cell.borrow().as_ptr()
         }),
     }
+     */
 }
+
+#[derive(Debug, Copy, Clone)]
+pub enum TransportError {
+    WrongArgCount,
+    ArgParse,
+    ReturnStr,
+    #[cfg(feature = "json_transport")]
+    ArgDeserialize,
+    #[cfg(feature = "json_transport")]
+    ReturnSerialize,
+}
+
+impl Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{ERR_HEADER}: ")?;
+        match self {
+            Self::WrongArgCount => write!(f, "{ERR_WRONG_ARG_COUNT}"),
+            Self::ArgParse => write!(f, "{ERR_ARG_PARSE}"),
+            Self::ReturnStr => write!(f, "{ERR_RETURN_STR}"),
+            #[cfg(feature = "json_transport")]
+            Self::ArgDeserialize => write!(f, "{ERR_ARG_DESERIALIZE}"),
+            #[cfg(feature = "json_transport")]
+            Self::ReturnSerialize => write!(f, "{ERR_RETURN_SERIALIZE}"),
+        }
+    }
+}
+
+impl Error for TransportError {}
 
 /// Represents a type that can be returned to BYOND via string transport
 /// (i.e. `byond_return`).
 pub trait StrReturn {
     /// Converts the type into a `Vec<u8>` that can be returned to BYOND.
     /// If `None` is returned, an empty string will be returned to BYOND.
-    fn to_return(self) -> Option<Vec<u8>>;
+    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError>;
 }
 
 impl StrReturn for () {
-    fn to_return(self) -> Option<Vec<u8>> {
-        None
+    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+        Ok(None)
     }
 }
 
 impl StrReturn for &'static str {
-    fn to_return(self) -> Option<Vec<u8>> {
-        Some(self.as_bytes().to_vec())
+    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+        Ok(Some(self.as_bytes().to_vec()))
     }
 }
 
 impl StrReturn for String {
-    fn to_return(self) -> Option<Vec<u8>> {
-        Some(self.into_bytes())
+    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+        Ok(Some(self.into_bytes()))
     }
 }
 
 impl StrReturn for Vec<u8> {
-    fn to_return(self) -> Option<Vec<u8>> {
-        Some(self)
+    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+        Ok(Some(self))
     }
 }
 
@@ -99,8 +151,8 @@ macro_rules! impl_str_return {
     ($($ty:ty),*) => {
         $(
             impl StrReturn for $ty {
-                fn to_return(self) -> Option<Vec<u8>> {
-                    Some(self.to_string().into_bytes())
+                fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+                    Ok(Some(self.to_string().into_bytes()))
                 }
             }
         )*
@@ -109,19 +161,23 @@ macro_rules! impl_str_return {
 
 impl_str_return!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, bool);
 
-pub trait StrArg<'a> {
-    fn from_arg(arg: Cow<'a, str>) -> Self;
+pub trait StrArg<'a>
+where
+    Self: Sized,
+{
+    fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError>;
 }
 
 impl<'a> StrArg<'a> for String {
-    fn from_arg(arg: Cow<'a, str>) -> Self {
-        arg.into_owned()
+    fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError> {
+        arg.map(|arg| arg.into_owned())
+            .ok_or(TransportError::WrongArgCount)
     }
 }
 
 impl<'a> StrArg<'a> for Cow<'a, str> {
-    fn from_arg(arg: Cow<'a, str>) -> Self {
-        arg
+    fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError> {
+        arg.ok_or(TransportError::WrongArgCount)
     }
 }
 
@@ -129,8 +185,10 @@ macro_rules! impl_str_arg {
     ($($ty:ty),*) => {
         $(
             impl<'a> StrArg<'a> for $ty {
-                fn from_arg(arg: Cow<'a, str>) -> Self {
-                    arg.parse().unwrap_or_default()
+                fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError> {
+                    arg
+                        .ok_or(TransportError::WrongArgCount)
+                        .and_then(|arg| arg.parse().map_err(|_| TransportError::ArgParse))
                 }
             }
         )*
@@ -140,11 +198,11 @@ macro_rules! impl_str_arg {
 impl_str_arg!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, bool);
 
 impl<'a, T: StrArg<'a>> StrArg<'a> for Option<T> {
-    fn from_arg(arg: Cow<'a, str>) -> Self {
-        if arg.is_empty() {
-            None
+    fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError> {
+        if let Some(arg) = arg {
+            T::from_arg(Some(arg)).map(Some)
         } else {
-            Some(T::from_arg(arg))
+            Ok(None)
         }
     }
 }
@@ -173,8 +231,12 @@ impl<T> StrReturn for Json<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    fn to_return(self) -> Option<Vec<u8>> {
-        serde_json::to_vec(&self.0).ok()
+    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+        if let Ok(serialized) = serde_json::to_vec(&self.0) {
+            Ok(Some(serialized))
+        } else {
+            Err(TransportError::ReturnSerialize)
+        }
     }
 }
 
@@ -183,7 +245,10 @@ impl<'a, T> StrArg<'a> for Json<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    fn from_arg(arg: Cow<'a, str>) -> Self {
-        Json(serde_json::from_str(&arg).unwrap())
+    fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError> {
+        let arg = arg.ok_or(TransportError::WrongArgCount)?;
+        let deserialized: T =
+            serde_json::from_str(&arg).map_err(|_| TransportError::ArgDeserialize)?;
+        Ok(Json(deserialized))
     }
 }

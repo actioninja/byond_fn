@@ -20,7 +20,7 @@ fn args_transform<'a>(fn_args: impl Iterator<Item = &'a FnArg>) -> TokenStream {
         };
 
         quote_spanned! { arg.span() =>
-            let #arg = byond_fn::str_ffi::StrArg::from_arg(args[#num].clone());
+            let #arg = byond_fn::str_ffi::StrArg::from_arg(args.get(#num));
         }
     });
     quote! {
