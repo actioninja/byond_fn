@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt::Display;
-use std::ptr::write;
 use std::slice;
 
 // BYOND doesn't like receiving back an empty string, so throw back just a null byte instead.
@@ -66,25 +65,6 @@ pub fn byond_return(value: impl StrReturn) -> Result<*const c_char, TransportErr
         },
         Err(err) => Err(err),
     }
-
-    /*
-    match value {
-        None => Ok(&EMPTY_STRING),
-        Some(vec) if vec.is_empty() => Ok(&EMPTY_STRING),
-        Some(vec) => RETURN_STRING.with(|cell| {
-            // Panicking over an FFI boundary is bad form, so if a NUL ends up
-            // in the result, just truncate.
-            let cstring = CString::new(vec).unwrap_or_else(|err| {
-                let post = err.nul_position();
-                let mut vec = err.into_vec();
-                vec.truncate(post);
-                CString::new(vec).unwrap_or_default()
-            });
-            cell.replace(cstring);
-            cell.borrow().as_ptr()
-        }),
-    }
-     */
 }
 
 #[derive(Debug, Copy, Clone)]

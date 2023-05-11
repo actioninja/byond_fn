@@ -67,10 +67,20 @@ fn fn_body_tokens(sig: &Signature) -> TokenStream {
     }
 }
 
+fn check_range_token() -> TokenStream {
+    quote! {
+
+        if argc < min_args  || argc > max_args {
+            return byond_fn::str_ffi::byond_return(byond_fn::str_ffi::TransportError::WrongArgCount.to_string()).unwrap();
+        }
+    }
+}
+
 pub(crate) fn tokens(sig: &Signature) -> FFITokens {
     FFITokens {
         fn_args: args_tokens(),
         return_type: return_type_token(),
         fn_body: fn_body_tokens(sig),
+        range_check: check_range_token(),
     }
 }

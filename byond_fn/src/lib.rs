@@ -2,8 +2,102 @@
 //!
 //! ## Usage
 //!
+//! Basic usage is as simple as:
+//! ```
+//! use byond_fn::byond_fn;
 //!
-//! ## Optional Paremeters
+//! #[byond_fn]
+//! pub fn add(arg1: u8, arg2: u8) -> u8 {
+//!     arg1 + arg2
+//! }
+//! ```
+//! This will generate a extern "C" function called `add` that can be called from BYOND:
+//!
+//! `call_ext("example_name.dll", "add")("2", "2") // returns 4`
+//!
+//! ## Errors
+//!
+//! Sometimes something may cause the parsing of arguments to fail, or returns to fail to serialize,
+//! or similar.
+//!
+//! This will result in an early return from the function with an error string being sent to BYOND.
+//!
+//! Possible errors with string transport are:
+//!
+//! - `@@BYOND_FFI_ERROR@@: Invalid number of arguments to function`
+//! - `@@BYOND_FFI_ERROR@@: Invalid argument type`
+//! - `@@BYOND_FFI_ERROR@@: Invalid return type`
+//! - `@@BYOND_FFI_ERROR@@: Invalid argument value`
+//! - `@@BYOND_FFI_ERROR@@: Invalid return value`
+//!
+//! Errors are always prefixed with `@@BYOND_FFI_ERROR@@`
+//!
+//! ## What's generated
+//! When a function is defined with `#[byond_fn]`, a function with the same name is generated in a
+//! private module with neccessary trappings for calling from BYOND.
+//! This generated function will parse the arguments from BYOND, call the original function, and
+//! return the result to BYOND.
+//!
+//! Example:
+//! ```
+//! use byond_fn::byond_fn;
+//!
+//! #[byond_fn]
+//! pub fn add(arg1: u8, arg2: u8) -> u8 {
+//!     arg1 + arg2
+//! }
+//! ```
+//! will generate an adjacent module that looks like this:
+//! ```
+//! mod __byond_fn_add {
+//!     // necessary signatures for calling from BYOND
+//!     #[no_mangle]
+//!     pub unsafe extern "C" fn add(
+//!         argc: ::std::os::raw::c_int,
+//!         argv: *const *const ::std::os::raw::c_char,
+//!     ) -> *const ::std::os::raw::c_char {
+//!         let min_args = 2i32;
+//!         let max_args = 2i32;
+//!         // ensure a valid number of arguments were passed, otherwise early return with error
+//!         if argc < min_args || argc > max_args {
+//!             return byond_fn::str_ffi::byond_return(
+//!                 byond_fn::str_ffi::TransportError::WrongArgCount.to_string(),
+//!             )
+//!             .unwrap();
+//!         }
+//!         // turn the raw pointers into a Vec of `Cow<str>`
+//!         let args = byond_fn::str_ffi::parse_str_args(argc, argv);
+//!         // bind the first argument to a value, early return with error if it fails to parse
+//!         let arg1: u8 = match byond_fn::str_ffi::StrArg::from_arg(
+//!             args.get(0usize).map(|arg| arg.clone()),
+//!         ) {
+//!             Ok(arg) => arg,
+//!             Err(err) => {
+//!                 return byond_fn::str_ffi::byond_return(err.to_string()).unwrap();
+//!             }
+//!         };
+//!         let arg2: u8 = match byond_fn::str_ffi::StrArg::from_arg(
+//!             args.get(1usize).map(|arg| arg.clone()),
+//!         ) {
+//!             Ok(arg) => arg,
+//!             Err(err) => {
+//!                 return byond_fn::str_ffi::byond_return(err.to_string()).unwrap();
+//!             }
+//!         };
+//!         // call the original function, turn the result into a string, and return it to BYOND
+//!         byond_fn::str_ffi::byond_return(super::add(arg1, arg2))
+//!             .unwrap_or_else(|err| {
+//!                 byond_fn::str_ffi::byond_return(err.to_string()).unwrap()
+//!         })
+//! }
+//! }
+//! ```
+//!
+//! ## Optional Parameters
+//!
+//! If a parameter is an `Option`, it will be optional to call from BYOND.
+//!
+//! All optional parameters must be at the end of the parameter list.
 //!
 //! ## JSON Transport
 //!
