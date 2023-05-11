@@ -1,11 +1,12 @@
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt::Display;
 use std::slice;
+
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 // BYOND doesn't like receiving back an empty string, so throw back just a null byte instead.
 const EMPTY_STRING: c_char = 0;
@@ -142,8 +143,8 @@ macro_rules! impl_str_return {
 impl_str_return!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, bool);
 
 pub trait StrArg<'a>
-where
-    Self: Sized,
+    where
+        Self: Sized,
 {
     fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError>;
 }
@@ -208,8 +209,8 @@ impl<T: Serialize + DeserializeOwned> From<T> for Json<T> {
 
 #[cfg(feature = "json_transport")]
 impl<T> StrReturn for Json<T>
-where
-    T: Serialize + DeserializeOwned,
+    where
+        T: Serialize + DeserializeOwned,
 {
     fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
         if let Ok(serialized) = serde_json::to_vec(&self.0) {
@@ -222,8 +223,8 @@ where
 
 #[cfg(feature = "json_transport")]
 impl<'a, T> StrArg<'a> for Json<T>
-where
-    T: Serialize + DeserializeOwned,
+    where
+        T: Serialize + DeserializeOwned,
 {
     fn from_arg(arg: Option<Cow<'a, str>>) -> Result<Self, TransportError> {
         let arg = arg.ok_or(TransportError::WrongArgCount)?;

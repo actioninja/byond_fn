@@ -128,11 +128,11 @@
 //! `Json` requires the serde `Serialize` and `Deserialize` traits to be implemented for the type.
 //!
 
+pub use byond_fn_impl::*;
+
 #[cfg(feature = "ffi_v2")]
 pub mod ffi_v2;
 pub mod str_ffi;
-
-pub use byond_fn_impl::*;
 
 #[cfg(test)]
 mod test {

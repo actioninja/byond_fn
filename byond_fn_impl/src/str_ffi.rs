@@ -1,10 +1,11 @@
-use crate::FFITokens;
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
+use syn::{FnArg, Signature};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::token::Comma;
-use syn::{FnArg, Signature};
+
+use crate::FFITokens;
 
 fn return_type_token() -> TokenStream {
     quote! { *const ::std::os::raw::c_char }

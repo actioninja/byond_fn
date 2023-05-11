@@ -1,15 +1,16 @@
-#[cfg(feature = "ffi_v2")]
-mod ffi_v2;
-mod str_ffi;
-
 extern crate proc_macro;
+
 use proc_macro::TokenStream;
+
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use proc_macro_error::{abort, proc_macro_error};
 use quote::quote;
-
-use syn::spanned::Spanned;
 use syn::{FnArg, ItemFn, Signature, Type};
+use syn::spanned::Spanned;
+
+#[cfg(feature = "ffi_v2")]
+mod ffi_v2;
+mod str_ffi;
 
 pub(crate) struct FFITokens {
     fn_args: TokenStream2,
@@ -92,8 +93,9 @@ fn byond_fn2(proc_args: TokenStream2, input: TokenStream2) -> TokenStream2 {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use quote::quote;
+
+    use super::*;
 
     #[test]
     fn is_optional_valid() {
