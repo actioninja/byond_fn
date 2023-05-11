@@ -13,9 +13,18 @@ use syn::{FnArg, ItemFn, Signature, Type};
 
 pub(crate) struct FFITokens {
     fn_args: TokenStream2,
-    args_transform: TokenStream2,
     return_type: TokenStream2,
-    return_value: TokenStream2,
+    fn_body: TokenStream2,
+}
+
+fn is_option_type(arg: &FnArg) -> bool {
+    match arg {
+        FnArg::Receiver(_) => abort!(arg.span(), "byond_fn can't have self argument"),
+        FnArg::Typed(arg) => match *arg.ty {
+            Type::Path(ref path) => path.path.segments.last().unwrap().ident == "Option",
+            _ => false,
+        },
+    }
 }
 
 #[proc_macro_error]
@@ -28,101 +37,62 @@ const STR_FFI_DESC: &str = "\"str\" (default): FFI with C Strings as the interop
 const FFI_V2_DESC: &str =
     "\"v2\": New FFI Format added with BYOND 515 that uses `ByondType` as the FFI medium";
 
-fn byond_fn2(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
+fn byond_fn2(proc_args: TokenStream2, input: TokenStream2) -> TokenStream2 {
     let original_fn: ItemFn = syn::parse2(input).unwrap();
 
-    let args: Ident = syn::parse2(args.clone()).unwrap_or(Ident::new("default", args.span()));
+    let proc_args: Ident =
+        syn::parse2(proc_args.clone()).unwrap_or(Ident::new("default", proc_args.span()));
 
-    let Signature { ident, inputs, .. } = sig;
+    let sig = &original_fn.sig;
 
-    let FFITokens {
-        fn_args,
-        args_transform,
-        return_type,
-        return_value,
-    } = match args.to_string().as_str() {
-        "default" | "str" => str_ffi::tokens(inputs.clone().iter()),
-        #[cfg(feature = "ffi_v2")]
-        "v2" => {
-            unimplemented!("Not yet implemented")
-        }
-        _ => {
-            let first_line = format!("\n- {STR_FFI_DESC}");
-            #[cfg(feature = "ffi_v2")]
-            let second_line = format!("\n- {FFI_V2_DESC}");
-            #[cfg(not(feature = "ffi_v2"))]
-            let second_line = "";
-            abort!(
-                args,
-                "\"{}\" is not a valid BYOND FFI function type",
-                args.to_string();
-                help = "VALID TYPES:{}{}", first_line, second_line
-
-            )
-        }
-    };
+    let Signature { ident, inputs, .. } = &sig;
 
     //verify optional params are at the tail of the sig
     let mut optional_encountered = false;
     for arg in inputs.iter() {
-        let arg = match arg {
-            FnArg::Receiver(_) => abort!(
-                arg,
-                "`byond_fn` only supports bare, non associated functions"
-            ),
-            FnArg::Typed(a) => a,
-        };
-
-        let arg_type = *arg.ty.clone();
-        match arg_type {
-            Type::Path(path) => {
-                let path = path.path;
-                if let Some(ident) = path.get_ident() {
-                    if *ident == "Option" {
-                        optional_encountered = true;
-                    }
-                }
-            }
-            _ => {
-                if optional_encountered {
-                    abort!(
-                        arg,
-                        "All optional parameters must be at the end of the signature"
-                    );
-                }
-            }
+        if optional_encountered && !is_option_type(arg) {
+            abort!(
+                arg.span(),
+                "Optional arguments must be at the end of the function signature"
+            );
+        } else {
+            optional_encountered = is_option_type(arg);
         }
     }
 
-    let fn_sig = quote! {
-        #[no_mangle]
-        #[allow(clippy::missing_safety_doc)]
-        pub unsafe extern "C" fn #ident (
-            #fn_args
-        ) -> #return_type
-    };
+    let mangled_name = Ident::new(
+        format!("__byond_fn_{}", ident.to_string()).as_str(),
+        ident.span(),
+    );
 
-    let block_inner = block.stmts;
+    let FFITokens {
+        fn_args,
+        return_type,
+        fn_body,
+    } = str_ffi::tokens(sig);
 
-    let wrapped_block = quote! {
-        let closure = || {
-            #(#block_inner)*
-        };
-    };
-
-    let tokens = quote! {
-        #fn_sig {
-            #args_transform
-            #wrapped_block
-            #return_value
+    quote! {
+        #original_fn
+        mod #mangled_name {
+            #[no_mangle]
+            pub unsafe extern "C" fn #ident(#fn_args) -> #return_type {
+                #fn_body
+            }
         }
-    };
-
-    tokens
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use super::*;
+    use quote::quote;
+
     #[test]
-    fn expected_simple() {}
+    fn is_optional_valid() {
+        let arg: FnArg = syn::parse2(quote! { foo: i32 }).unwrap();
+        assert!(!is_option_type(&arg));
+
+        let arg: FnArg = syn::parse2(quote! { foo: Option<i32> }).unwrap();
+        assert!(is_option_type(&arg));
+    }
 }

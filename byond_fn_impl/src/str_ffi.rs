@@ -1,8 +1,10 @@
 use crate::FFITokens;
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::FnArg;
+use syn::token::Comma;
+use syn::{FnArg, Signature};
 
 fn return_type_token() -> TokenStream {
     quote! { *const ::std::os::raw::c_char }
@@ -12,8 +14,8 @@ fn args_tokens() -> TokenStream {
     quote! { argc: ::std::os::raw::c_int, argv: *const *const ::std::os::raw::c_char }
 }
 
-fn args_transform<'a>(fn_args: impl Iterator<Item = &'a FnArg>) -> TokenStream {
-    let args_bind = fn_args.enumerate().map(|(num, arg)| {
+fn args_transform(fn_args: &Punctuated<FnArg, Comma>) -> TokenStream {
+    let args_bind = fn_args.iter().enumerate().map(|(num, arg)| {
         let arg = match arg {
             FnArg::Receiver(_) => panic!("Byond functions can't have self argument"),
             FnArg::Typed(arg) => arg,
@@ -29,15 +31,46 @@ fn args_transform<'a>(fn_args: impl Iterator<Item = &'a FnArg>) -> TokenStream {
     }
 }
 
-fn return_value_tokens() -> TokenStream {
-    quote! { byond_fn::str_ffi::byond_return(closure()) }
+fn fn_body_tokens(sig: &Signature) -> TokenStream {
+    let Signature { ident, inputs, .. } = sig;
+
+    let args_binding = inputs.iter().enumerate().map(|(num, arg)| {
+        if let FnArg::Typed(arg) = arg {
+            quote! {
+                let #arg = match byond_fn::str_ffi::StrArg::from_arg(args.get(#num).map(|arg| arg.clone())) {
+                    Ok(arg) => arg,
+                    Err(err) => {
+                        return byond_fn::str_ffi::byond_return(err.to_string()).unwrap();
+                    },
+                };
+            }
+        } else {
+            panic!("Byond functions can't have self argument")
+        }
+    });
+
+    let return_args = inputs.iter().map(|arg| {
+        if let FnArg::Typed(arg) = arg {
+            let pat = *arg.pat.clone();
+            quote! { #pat }
+        } else {
+            panic!("Byond functions can't have self argument")
+        }
+    });
+
+    quote! {
+        let args = byond_fn::str_ffi::parse_str_args(argc, argv);
+        #(#args_binding)*
+        byond_fn::str_ffi::byond_return(super::#ident(#(#return_args),*)).unwrap_or_else(|err| {
+            byond_fn::str_ffi::byond_return(err.to_string()).unwrap()
+        })
+    }
 }
 
-pub(crate) fn tokens<'a>(fn_args: impl Iterator<Item = &'a FnArg>) -> FFITokens {
+pub(crate) fn tokens(sig: &Signature) -> FFITokens {
     FFITokens {
         fn_args: args_tokens(),
         return_type: return_type_token(),
-        args_transform: args_transform(fn_args),
-        return_value: return_value_tokens(),
+        fn_body: fn_body_tokens(sig),
     }
 }
