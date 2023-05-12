@@ -1,3 +1,3 @@
 # byond_fn
 
-<!-- cargo-rdme start -->
+<!-- cargo-rdme -->
