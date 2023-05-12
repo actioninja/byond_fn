@@ -19,6 +19,18 @@
 //!
 //! Errors are always prefixed with `@@BYOND_FFI_ERROR@@`
 //!
+//! ## JSON Transport
+//!
+//! parameters that use the `Json` wrapper type will attempt to deserialize the parameter from JSON
+//! into the provided type. Return types that use the `Json` wrapper type will be serialized into
+//! JSON before being sent to BYOND.
+//!
+//! If this fails, the function will early return an error string to BYOND.
+//!
+//! `Json` requires the serde `Serialize` and `Deserialize` traits to be implemented for the type
+//!
+//! See `[Json](crate::str_ffi::Json)` for more information.
+//!
 //! ## What's generated
 //! When a function is defined with `#[byond_fn]`, a function with the same name is generated in a
 //! private module with necessary trappings for calling from BYOND.
