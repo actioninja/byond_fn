@@ -139,7 +139,7 @@ pub unsafe fn parse_str_args<'a>(
     slice::from_raw_parts(argv, argc as usize)
         .iter()
         .map(|ptr| CStr::from_ptr(*ptr))
-        .map(|cstr| cstr.to_str())
+        .map(CStr::to_str)
         .map(|res| res.map_err(TransportError::BadUTF8))
         .collect()
 }

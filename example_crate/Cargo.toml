@@ -9,4 +9,4 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-byond_fn = { path = "../byond_fn" }
+byond_fn = { path = ".." }
