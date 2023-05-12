@@ -5,8 +5,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use proc_macro_error::{abort, proc_macro_error};
 use quote::quote;
-use syn::{FnArg, ItemFn, Signature, Type};
 use syn::spanned::Spanned;
+use syn::{FnArg, ItemFn, Signature, Type};
 
 #[cfg(feature = "ffi_v2")]
 mod ffi_v2;
@@ -16,7 +16,6 @@ pub(crate) struct FFITokens {
     fn_args: TokenStream2,
     return_type: TokenStream2,
     fn_body: TokenStream2,
-    range_check: TokenStream2,
 }
 
 fn is_option_type(arg: &FnArg) -> bool {
@@ -62,9 +61,6 @@ fn byond_fn2(proc_args: TokenStream2, input: TokenStream2) -> TokenStream2 {
         }
     }
 
-    let max_args = inputs.len() as i32;
-    let min_args = inputs.iter().filter(|arg| !is_option_type(arg)).count() as i32;
-
     let mangled_name = Ident::new(
         format!("__byond_fn_{}", ident.to_string()).as_str(),
         ident.span(),
@@ -74,7 +70,6 @@ fn byond_fn2(proc_args: TokenStream2, input: TokenStream2) -> TokenStream2 {
         fn_args,
         return_type,
         fn_body,
-        range_check,
     } = str_ffi::tokens(sig);
 
     quote! {
@@ -82,9 +77,6 @@ fn byond_fn2(proc_args: TokenStream2, input: TokenStream2) -> TokenStream2 {
         mod #mangled_name {
             #[no_mangle]
             pub unsafe extern "C" fn #ident(#fn_args) -> #return_type {
-                let min_args = #min_args;
-                let max_args = #max_args;
-                #range_check
                 #fn_body
             }
         }

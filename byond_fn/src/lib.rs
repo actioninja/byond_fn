@@ -73,7 +73,7 @@
 //!         ) {
 //!             Ok(arg) => arg,
 //!             Err(err) => {
-//!                 return byond_fn::str_ffi::byond_return(err.to_string()).unwrap();
+//!                 return byond_fn::str_ffi::byond_return(err);
 //!             }
 //!         };
 //!         let arg2: u8 = match byond_fn::str_ffi::StrArg::from_arg(
@@ -81,15 +81,11 @@
 //!         ) {
 //!             Ok(arg) => arg,
 //!             Err(err) => {
-//!                 return byond_fn::str_ffi::byond_return(err.to_string()).unwrap();
+//!                 return byond_fn::str_ffi::byond_return(err);
 //!             }
 //!         };
 //!         // call the original function, turn the result into a string, and return it to BYOND
 //!         byond_fn::str_ffi::byond_return(super::add(arg1, arg2))
-//!             .unwrap_or_else(|err| {
-//!                 byond_fn::str_ffi::byond_return(err.to_string()).unwrap()
-//!         })
-//! }
 //! }
 //! ```
 //!
