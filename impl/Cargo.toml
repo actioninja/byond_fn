@@ -2,9 +2,9 @@
 name = "byond_fn_impl"
 version = "0.1.0"
 authors = ["actioninja <actioninja@criticalaction.net>"]
-description = "A `cargo generate` template for quick-starting a procedural macro crate"
-keywords = ["template", "proc_macro", "procmacro"]
+description = "proc macro implementation for byond_fn. Do not use directly."
 edition = "2021"
+license = "MPL-2.0"
 
 [lib]
 proc-macro = true
