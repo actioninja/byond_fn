@@ -1,6 +1,6 @@
 [package]
 name = "byond_fn"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Rob Bailey <actioninja@criticalaction.net"]
 edition = "2021"
 description = "A utility macro for generating FFI functions for BYOND"
