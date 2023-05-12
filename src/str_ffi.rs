@@ -91,6 +91,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt::Display;
+use std::path::{Path, PathBuf};
 use std::slice;
 use std::str::Utf8Error;
 
@@ -285,6 +286,24 @@ impl<'a> StrArg<'a> for String {
 impl<'a> StrArg<'a> for Cow<'a, str> {
     fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
         arg.map(Into::into).ok_or(TransportError::WrongArgCount)
+    }
+}
+
+impl<'a> StrArg<'a> for &'a str {
+    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
+        arg.ok_or(TransportError::WrongArgCount)
+    }
+}
+
+impl<'a> StrArg<'a> for &'a Path {
+    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
+        arg.map(Path::new).ok_or(TransportError::WrongArgCount)
+    }
+}
+
+impl<'a> StrArg<'a> for PathBuf {
+    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
+        arg.map(PathBuf::from).ok_or(TransportError::WrongArgCount)
     }
 }
 
