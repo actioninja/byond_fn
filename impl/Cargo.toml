@@ -1,6 +1,6 @@
 [package]
 name = "byond_fn_impl"
-version = "0.2.0"
+version = "0.4.0"
 authors = ["actioninja <actioninja@criticalaction.net>"]
 description = "proc macro implementation for byond_fn. Do not use directly."
 edition = "2021"
