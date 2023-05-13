@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{FnArg, Signature};
 
 use crate::{is_option_type, FFITokens};
@@ -15,11 +15,14 @@ fn args_tokens() -> TokenStream {
 fn fn_body_tokens(sig: &Signature) -> TokenStream {
     let Signature { ident, inputs, .. } = sig;
 
+    let min_args = inputs.iter().filter(|arg| !is_option_type(arg)).count();
+    let max_args = inputs.len();
     let args_binding = inputs.iter().enumerate().map(|(num, arg)| {
         if let FnArg::Typed(arg) = arg {
             let arg = *arg.pat.clone();
+            let arg_string = arg.to_token_stream().to_string();
             quote! {
-                let #arg = match byond_fn::str_ffi::StrArg::from_arg(args.get(#num).map(|arg| *arg)) {
+                let #arg = match byond_fn::str_ffi::StrArg::map_arg(args.get(#num).map(|arg| *arg), #min_args, #max_args, #arg_string, #num) {
                     Ok(arg) => arg,
                     Err(err) => {
                         return byond_fn::str_ffi::byond_return(err);
@@ -40,11 +43,15 @@ fn fn_body_tokens(sig: &Signature) -> TokenStream {
         }
     });
 
-    let max_args = inputs.len() as i32;
-    let min_args = inputs.iter().filter(|arg| !is_option_type(arg)).count() as i32;
+    let min_args_i32 = min_args as i32;
+    let max_args_i32 = max_args as i32;
     let range_check = quote! {
-        if argc < #min_args  || argc > #max_args {
-            return byond_fn::str_ffi::byond_return(byond_fn::str_ffi::TransportError::WrongArgCount);
+        if argc < #min_args_i32  || argc > #max_args_i32 {
+            return byond_fn::str_ffi::byond_return(byond_fn::str_ffi::TransportError::WrongArgCount {
+                expected_min: #min_args,
+                expected_max: #max_args,
+                got: argc as usize,
+            });
         }
     };
 

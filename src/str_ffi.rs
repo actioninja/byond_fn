@@ -7,17 +7,20 @@
 //! Sometimes something may cause the parsing of arguments to fail, or returns to fail to serialize,
 //! or similar.
 //!
-//! This will result in an early return from the function with an error string being sent to BYOND.
+//! In these cases, the function will return an error string to BYOND. Error strings will always be structured like so:
 //!
-//! Possible errors with string transport are:
+//! `@@ERR@@|<error class>|<error type>|<error message>`
 //!
-//! - `@@BYOND_FFI_ERROR@@: Invalid number of arguments to function`
-//! - `@@BYOND_FFI_ERROR@@: Invalid argument type`
-//! - `@@BYOND_FFI_ERROR@@: Invalid return type`
-//! - `@@BYOND_FFI_ERROR@@: Invalid argument value`
-//! - `@@BYOND_FFI_ERROR@@: Invalid return value`
+//! The error class is an easily machine readable string that describes the general category of error that occurred.
+//! Possible classes are:
+//! - `FFI` - An error occurred while parsing arguments, serializing return values, or the function being called
+//! incorrectly
+//! -`JSON` - An error occurred while parsing or serializing JSON arguments or return values
+//! - `FN` - An error occurred within the function itself being called and was returned as an `Err`
 //!
-//! Errors are always prefixed with `@@BYOND_FFI_ERROR@@`
+//! The error type is an easily machine readable string that describes the specific error that occurred
+//!
+//! Error type is omitted for `FN` errors, as this would require each consumer to define their own errors.
 //!
 //! ## JSON Transport
 //!
@@ -90,7 +93,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::{c_char, c_int, CStr, CString};
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::slice;
 use std::str::Utf8Error;
@@ -107,18 +110,25 @@ thread_local! {
     static RETURN_STRING: RefCell<CString> = RefCell::new(CString::default());
 }
 
-/// If a string returned is prefixed with this, it indicates that an error occurred.
-pub const ERR_HEADER: &str = "@@BYOND_FFI_ERROR@@";
+/// This module contains easily machine parsable errors keys
+pub mod error_keys {
+    /// All returned error strings are prefixed with this
+    pub const HEADER: &str = "@@ERR@@";
 
-pub const ERR_BAD_UTF8: &str = "Invalid UTF-8 string";
-pub const ERR_WRONG_ARG_COUNT: &str = "Wrong number of arguments passed to function";
-pub const ERR_ARG_PARSE: &str = "Failed to parse argument";
-pub const ERR_RETURN_STR: &str = "Failed to serialize return value";
+    pub const CLASS_FFI: &str = "FFI";
+    pub const CLASS_JSON: &str = "JSON";
+    pub const CLASS_FN: &str = "FN";
 
-#[cfg(feature = "json_transport")]
-pub const ERR_RETURN_SERIALIZE: &str = "Failed to serialize return value";
-#[cfg(feature = "json_transport")]
-pub const ERR_ARG_DESERIALIZE: &str = "Failed to deserialize arg value";
+    pub const FFI_TYPE_BAD_UTF8: &str = "BAD_UTF8";
+    pub const FFI_TYPE_WRONG_ARG_COUNT: &str = "WRONG_ARG_COUNT";
+    pub const FFI_TYPE_ARG_PARSE: &str = "ARG_PARSE";
+    pub const FFI_TYPE_RETURN_STR: &str = "RETURN_STR";
+
+    #[cfg(feature = "json_transport")]
+    pub const JSON_TYPE_SERIALIZE: &str = "SERIALIZE";
+    #[cfg(feature = "json_transport")]
+    pub const JSON_TYPE_DESERIALIZE: &str = "DESERIALIZE";
+}
 
 /// Turns the `argc` and `argv` arguments into a Rust `Vec<&str>`.
 ///
@@ -136,12 +146,12 @@ pub const ERR_ARG_DESERIALIZE: &str = "Failed to deserialize arg value";
 pub unsafe fn parse_str_args<'a>(
     argc: c_int,
     argv: *const *const c_char,
-) -> Result<Vec<&'a str>, TransportError> {
+) -> Result<Vec<&'a str>, FFIError> {
     slice::from_raw_parts(argv, argc as usize)
         .iter()
         .map(|ptr| CStr::from_ptr(*ptr))
         .map(CStr::to_str)
-        .map(|res| res.map_err(TransportError::BadUTF8))
+        .map(|res| res.map_err(TransportError::BadUTF8).map_err(Into::into))
         .collect()
 }
 
@@ -174,30 +184,85 @@ pub fn byond_return(value: impl StrReturn) -> *const c_char {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
+pub enum FFIError {
+    TransportError(TransportError),
+    OtherError(Box<dyn Error>),
+    #[cfg(feature = "json_transport")]
+    JsonError(JsonError),
+}
+
+impl Display for FFIError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{};", error_keys::HEADER)?;
+        match self {
+            FFIError::TransportError(err) => write!(f, "{err}"),
+            FFIError::OtherError(err) => write!(f, "{err}"),
+            #[cfg(feature = "json_transport")]
+            FFIError::JsonError(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl From<TransportError> for FFIError {
+    fn from(err: TransportError) -> Self {
+        Self::TransportError(err)
+    }
+}
+
+impl From<Box<dyn Error>> for FFIError {
+    fn from(err: Box<dyn Error>) -> Self {
+        Self::OtherError(err)
+    }
+}
+
+#[derive(Debug)]
 pub enum TransportError {
     BadUTF8(Utf8Error),
-    WrongArgCount,
-    ArgParse,
-    ReturnStr,
-    #[cfg(feature = "json_transport")]
-    ArgDeserialize,
-    #[cfg(feature = "json_transport")]
-    ReturnSerialize,
+    WrongArgCount {
+        expected_min: usize,
+        expected_max: usize,
+        got: usize,
+    },
+    ArgParse {
+        arg_name: String,
+        actual_content: String,
+    },
+    ReturnStr(String),
 }
 
 impl Display for TransportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{ERR_HEADER}: ")?;
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{};", error_keys::CLASS_FFI)?;
         match self {
-            Self::BadUTF8(utf) => write!(f, "{ERR_BAD_UTF8}; {utf}"),
-            Self::WrongArgCount => write!(f, "{ERR_WRONG_ARG_COUNT}"),
-            Self::ArgParse => write!(f, "{ERR_ARG_PARSE}"),
-            Self::ReturnStr => write!(f, "{ERR_RETURN_STR}"),
-            #[cfg(feature = "json_transport")]
-            Self::ArgDeserialize => write!(f, "{ERR_ARG_DESERIALIZE}"),
-            #[cfg(feature = "json_transport")]
-            Self::ReturnSerialize => write!(f, "{ERR_RETURN_SERIALIZE}"),
+            Self::BadUTF8(utf) => write!(f, "{}; {}", error_keys::FFI_TYPE_BAD_UTF8, utf),
+            Self::WrongArgCount {
+                expected_min,
+                expected_max,
+                got,
+            } => {
+                let range_str = match (expected_min, expected_max) {
+                    (min, max) if min == max => format!("{min}"),
+                    (min, max) => format!("{min}-{max}"),
+                };
+                write!(f, "Expected {range_str} args, got {got}")
+            }
+            Self::ArgParse {
+                arg_name,
+                actual_content,
+            } => write!(
+                f,
+                "{};Failed to parse argument \"{}\" (content was \"{}\")",
+                error_keys::FFI_TYPE_ARG_PARSE,
+                arg_name,
+                actual_content,
+            ),
+            Self::ReturnStr(failed_return) => write!(
+                f,
+                "{};Failed to serialize return value \"{}\"",
+                error_keys::FFI_TYPE_RETURN_STR,
+                failed_return,
+            ),
         }
     }
 }
@@ -210,46 +275,59 @@ impl From<Utf8Error> for TransportError {
     }
 }
 
-impl From<TransportError> for String {
-    fn from(err: TransportError) -> Self {
-        err.to_string()
-    }
-}
-
 /// Represents a type that can be returned to BYOND via string transport
 pub trait StrReturn {
     /// Converts the type into a `Vec<u8>` that can be returned to BYOND.
     /// If `None` is returned, an empty string will be returned to BYOND.
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError>;
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError>;
 }
 
 impl StrReturn for () {
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
         Ok(None)
     }
 }
 
 impl StrReturn for &'static str {
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
         Ok(Some(self.as_bytes().to_vec()))
     }
 }
 
 impl StrReturn for String {
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
         Ok(Some(self.into_bytes()))
     }
 }
 
 impl StrReturn for Vec<u8> {
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
         Ok(Some(self))
     }
 }
 
-impl StrReturn for TransportError {
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+impl StrReturn for FFIError {
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
         Err(self)
+    }
+}
+
+impl<T, E> StrReturn for Result<T, E>
+where
+    T: StrReturn,
+    E: Error + 'static,
+{
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
+        match self {
+            Ok(inner) => inner.to_return(),
+            Err(err) => Err(FFIError::OtherError(Box::new(err))),
+        }
+    }
+}
+
+impl StrReturn for TransportError {
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
+        Err(FFIError::TransportError(self))
     }
 }
 
@@ -257,7 +335,7 @@ macro_rules! impl_str_return {
     ($($ty:ty),*) => {
         $(
             impl StrReturn for $ty {
-                fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
+                fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
                     Ok(Some(self.to_string().into_bytes()))
                 }
             }
@@ -273,37 +351,58 @@ where
     Self: Sized,
 {
     /// Parses the type from a string slice.
-    /// If `None` is passed, `Err(TransportError::WrongArgCount)` should be returned.
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError>;
+    /// This function should *never* be called directly. Only through map_arg.
+    fn from_arg(_arg: &'a str) -> Result<Self, FFIError> {
+        unimplemented!("from_arg not implemented for type (This is a bug)")
+    }
+
+    /// Maps an argument to a type. Handles error cases.
+    fn map_arg(
+        arg: Option<&'a str>,
+        expected_min: usize,
+        expected_max: usize,
+        _arg_name: &str,
+        arg_num: usize,
+    ) -> Result<Self, FFIError> {
+        if let Some(arg) = arg {
+            Self::from_arg(arg)
+        } else {
+            Err(FFIError::TransportError(TransportError::WrongArgCount {
+                expected_min,
+                expected_max,
+                got: arg_num,
+            }))
+        }
+    }
 }
 
 impl<'a> StrArg<'a> for String {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-        arg.map(str::to_string).ok_or(TransportError::WrongArgCount)
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        Ok(arg.to_string())
     }
 }
 
 impl<'a> StrArg<'a> for Cow<'a, str> {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-        arg.map(Into::into).ok_or(TransportError::WrongArgCount)
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        Ok(arg.into())
     }
 }
 
 impl<'a> StrArg<'a> for &'a str {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-        arg.ok_or(TransportError::WrongArgCount)
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        Ok(arg)
     }
 }
 
 impl<'a> StrArg<'a> for &'a Path {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-        arg.map(Path::new).ok_or(TransportError::WrongArgCount)
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        Ok(Path::new(arg))
     }
 }
 
 impl<'a> StrArg<'a> for PathBuf {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-        arg.map(PathBuf::from).ok_or(TransportError::WrongArgCount)
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        Ok(PathBuf::from(arg))
     }
 }
 
@@ -311,10 +410,25 @@ macro_rules! impl_str_arg {
     ($($ty:ty),*) => {
         $(
             impl<'a> StrArg<'a> for $ty {
-                fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-                    arg
-                        .ok_or(TransportError::WrongArgCount)
-                        .and_then(|arg| arg.parse().map_err(|_| TransportError::ArgParse))
+                fn map_arg(
+                    arg: Option<&'a str>,
+                    expected_min: usize,
+                    expected_max: usize,
+                    arg_name: &str,
+                    arg_num: usize,
+                ) -> Result<Self, FFIError> {
+                    if let Some(arg) = arg {
+                        arg.parse().map_err(|_| FFIError::TransportError(TransportError::ArgParse {
+                            arg_name: arg_name.to_string(),
+                            actual_content: arg.to_string(),
+                        }))
+                    } else {
+                        Err(TransportError::WrongArgCount {
+                            expected_min,
+                            expected_max,
+                            got: arg_num,
+                        }.into())
+                    }
                 }
             }
         )*
@@ -324,9 +438,19 @@ macro_rules! impl_str_arg {
 impl_str_arg!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, bool);
 
 impl<'a, T: StrArg<'a>> StrArg<'a> for Option<T> {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        T::from_arg(arg).map(Some)
+    }
+
+    fn map_arg(
+        arg: Option<&'a str>,
+        _expected_min: usize,
+        _expected_max: usize,
+        _arg_name: &str,
+        _arg_num: usize,
+    ) -> Result<Self, FFIError> {
         if let Some(arg) = arg {
-            T::from_arg(Some(arg)).map(Some)
+            Self::from_arg(arg)
         } else {
             Ok(None)
         }
@@ -379,12 +503,11 @@ impl<T> StrReturn for Json<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    fn to_return(self) -> Result<Option<Vec<u8>>, TransportError> {
-        if let Ok(serialized) = serde_json::to_vec(&self.0) {
-            Ok(Some(serialized))
-        } else {
-            Err(TransportError::ReturnSerialize)
-        }
+    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
+        serde_json::to_vec(&self.0)
+            .map_err(JsonError::ReturnSerialize)
+            .map_err(FFIError::JsonError)
+            .map(Some)
     }
 }
 
@@ -393,10 +516,42 @@ impl<'a, T> StrArg<'a> for Json<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    fn from_arg(arg: Option<&'a str>) -> Result<Self, TransportError> {
-        let arg = arg.ok_or(TransportError::WrongArgCount)?;
-        let deserialized: T =
-            serde_json::from_str(arg).map_err(|_| TransportError::ArgDeserialize)?;
+    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+        let deserialized: T = serde_json::from_str(arg)
+            .map_err(JsonError::ArgDeserialize)
+            .map_err(FFIError::JsonError)?;
         Ok(Json(deserialized))
+    }
+}
+
+#[cfg(feature = "json_transport")]
+#[derive(Debug)]
+pub enum JsonError {
+    ArgDeserialize(serde_json::Error),
+    ReturnSerialize(serde_json::Error),
+}
+
+#[cfg(feature = "json_transport")]
+impl Display for JsonError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{};", error_keys::CLASS_JSON)?;
+        match self {
+            JsonError::ArgDeserialize(err) => {
+                write!(f, "{};{}", error_keys::JSON_TYPE_DESERIALIZE, err)
+            }
+            JsonError::ReturnSerialize(err) => {
+                write!(f, "{};{}", error_keys::JSON_TYPE_SERIALIZE, err)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "json_transport")]
+impl Error for JsonError {}
+
+#[cfg(feature = "json_transport")]
+impl From<JsonError> for FFIError {
+    fn from(e: JsonError) -> Self {
+        FFIError::JsonError(e)
     }
 }

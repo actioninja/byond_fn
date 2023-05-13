@@ -15,7 +15,6 @@
 //!
 //! `call_ext("example_name.dll", "add")("2", "2") // returns 4`
 //!
-//!
 //! ## Optional Parameters
 //!
 //! If a parameter is an `Option`, it will be optional to call from BYOND.
