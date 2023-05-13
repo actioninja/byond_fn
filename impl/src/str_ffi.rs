@@ -17,6 +17,7 @@ fn fn_body_tokens(sig: &Signature) -> TokenStream {
 
     let args_binding = inputs.iter().enumerate().map(|(num, arg)| {
         if let FnArg::Typed(arg) = arg {
+            let arg = *arg.pat.clone();
             quote! {
                 let #arg = match byond_fn::str_ffi::StrArg::from_arg(args.get(#num).map(|arg| *arg)) {
                     Ok(arg) => arg,
