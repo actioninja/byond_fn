@@ -1,6 +1,6 @@
 [package]
 name = "byond_fn"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["Rob Bailey <actioninja@criticalaction.net"]
 edition = "2021"
 description = "A utility macro for generating FFI functions for BYOND"
@@ -28,3 +28,7 @@ members = [
     "impl",
     "example_crate"
 ]
+
+# docs.rs should build against standard x64 since it's not actually going to be linked against BYOND
+[package.metadata.docs.rs]
+features = ["allow_other_arch"]
