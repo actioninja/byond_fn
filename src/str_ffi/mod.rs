@@ -89,6 +89,9 @@
 //! }
 //! ```
 
+#[cfg(feature = "json_transport")]
+pub mod json;
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::error::Error;
@@ -98,8 +101,7 @@ use std::path::{Path, PathBuf};
 use std::slice;
 use std::str::Utf8Error;
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use crate::str_ffi::json::JsonError;
 
 // BYOND doesn't like receiving back an empty string, so throw back just a null byte instead.
 const EMPTY_STRING: c_char = 0;
@@ -141,16 +143,18 @@ pub mod error_keys {
 /// # Safety
 /// Derefs the `argv` pointer.
 /// This is intended to be used with the `argv` pointer that comes from the FFI bridge, and is
-/// expected to be a valid pointer to an array of `argc` pointers to null-terminated strings.
+/// expected to be a valid pointer to an array of `argc` count pointers to null-terminated strings.
 /// If this is not the case, this function will cause undefined behavior.
 pub unsafe fn parse_str_args<'a>(
     argc: c_int,
     argv: *const *const c_char,
 ) -> Result<Vec<&'a str>, FFIError> {
-    slice::from_raw_parts(argv, argc as usize)
-        .iter()
-        .map(|ptr| CStr::from_ptr(*ptr))
-        .map(CStr::to_str)
+    let cstr = unsafe {
+        slice::from_raw_parts(argv, argc as usize)
+            .iter()
+            .map(|ptr| CStr::from_ptr(*ptr))
+    };
+    cstr.map(CStr::to_str)
         .map(|res| res.map_err(TransportError::BadUTF8).map_err(Into::into))
         .collect()
 }
@@ -351,9 +355,10 @@ where
     Self: Sized,
 {
     /// Parses the type from a string slice.
-    /// This function should *never* be called directly. Only through map_arg.
-    fn from_arg(_arg: &'a str) -> Result<Self, FFIError> {
-        unimplemented!("from_arg not implemented for type (This is a bug)")
+    /// This function should *never* be called directly. Only through `map_arg`.
+    fn from_arg(_arg: &'a str, _arg_name: &str) -> Result<Self, FFIError> {
+        let type_name = std::any::type_name::<Self>();
+        unimplemented!("from_arg not implemented for type \"{type_name}\" (This is a bug)")
     }
 
     /// Maps an argument to a type. Handles error cases.
@@ -361,11 +366,11 @@ where
         arg: Option<&'a str>,
         expected_min: usize,
         expected_max: usize,
-        _arg_name: &str,
+        arg_name: &str,
         arg_num: usize,
     ) -> Result<Self, FFIError> {
         if let Some(arg) = arg {
-            Self::from_arg(arg)
+            Self::from_arg(arg, arg_name)
         } else {
             Err(FFIError::TransportError(TransportError::WrongArgCount {
                 expected_min,
@@ -377,31 +382,31 @@ where
 }
 
 impl<'a> StrArg<'a> for String {
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+    fn from_arg(arg: &'a str, _arg_name: &str) -> Result<Self, FFIError> {
         Ok(arg.to_string())
     }
 }
 
 impl<'a> StrArg<'a> for Cow<'a, str> {
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+    fn from_arg(arg: &'a str, _arg_name: &str) -> Result<Self, FFIError> {
         Ok(arg.into())
     }
 }
 
 impl<'a> StrArg<'a> for &'a str {
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+    fn from_arg(arg: &'a str, _arg_name: &str) -> Result<Self, FFIError> {
         Ok(arg)
     }
 }
 
 impl<'a> StrArg<'a> for &'a Path {
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+    fn from_arg(arg: &'a str, _arg_name: &str) -> Result<Self, FFIError> {
         Ok(Path::new(arg))
     }
 }
 
 impl<'a> StrArg<'a> for PathBuf {
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
+    fn from_arg(arg: &'a str, _arg_name: &str) -> Result<Self, FFIError> {
         Ok(PathBuf::from(arg))
     }
 }
@@ -410,25 +415,11 @@ macro_rules! impl_str_arg {
     ($($ty:ty),*) => {
         $(
             impl<'a> StrArg<'a> for $ty {
-                fn map_arg(
-                    arg: Option<&'a str>,
-                    expected_min: usize,
-                    expected_max: usize,
-                    arg_name: &str,
-                    arg_num: usize,
-                ) -> Result<Self, FFIError> {
-                    if let Some(arg) = arg {
-                        arg.parse().map_err(|_| FFIError::TransportError(TransportError::ArgParse {
-                            arg_name: arg_name.to_string(),
-                            actual_content: arg.to_string(),
-                        }))
-                    } else {
-                        Err(TransportError::WrongArgCount {
-                            expected_min,
-                            expected_max,
-                            got: arg_num,
-                        }.into())
-                    }
+                fn from_arg(arg: &'a str, arg_name: &str) -> Result<Self, FFIError> {
+                    arg.parse().map_err(|_| FFIError::TransportError(TransportError::ArgParse {
+                        arg_name: arg_name.to_string(),
+                        actual_content: arg.to_string(),
+                    }))
                 }
             }
         )*
@@ -438,120 +429,21 @@ macro_rules! impl_str_arg {
 impl_str_arg!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, bool);
 
 impl<'a, T: StrArg<'a>> StrArg<'a> for Option<T> {
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
-        T::from_arg(arg).map(Some)
+    fn from_arg(arg: &'a str, arg_name: &str) -> Result<Self, FFIError> {
+        T::from_arg(arg, arg_name).map(Some)
     }
 
     fn map_arg(
         arg: Option<&'a str>,
         _expected_min: usize,
         _expected_max: usize,
-        _arg_name: &str,
+        arg_name: &str,
         _arg_num: usize,
     ) -> Result<Self, FFIError> {
         if let Some(arg) = arg {
-            Self::from_arg(arg)
+            Self::from_arg(arg, arg_name)
         } else {
             Ok(None)
         }
-    }
-}
-
-/// Wraps another type to represent it should be parsed as JSON, or returned as JSON.
-///
-/// When a type is wrapped in this, it will be parsed as JSON when passed as an argument:
-/// ```
-/// use byond_fn::byond_fn;
-/// use byond_fn::str_ffi::Json;
-///
-/// #[derive(serde::Serialize, serde::Deserialize)]
-/// pub struct ExampleStruct {
-///     field1: u32,
-///     field2: String,
-/// }
-///
-/// #[byond_fn]
-/// fn example_fn(json: Json<ExampleStruct>) {
-///     let mut unwrapped = json.into_inner();
-///     // this is now a regular ExampleStruct.
-///     unwrapped.field1 += 1;
-/// }
-/// ```
-///
-/// It is `repr(transparent)` so usage of this type should be zero-cost.
-#[repr(transparent)]
-#[derive(Debug)]
-#[cfg(feature = "json_transport")]
-pub struct Json<T: Serialize + DeserializeOwned>(pub T);
-
-#[cfg(feature = "json_transport")]
-impl<T: Serialize + DeserializeOwned> Json<T> {
-    pub fn into_inner(self) -> T {
-        self.0
-    }
-}
-
-#[cfg(feature = "json_transport")]
-impl<T: Serialize + DeserializeOwned> From<T> for Json<T> {
-    fn from(t: T) -> Self {
-        Json(t)
-    }
-}
-
-#[cfg(feature = "json_transport")]
-impl<T> StrReturn for Json<T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    fn to_return(self) -> Result<Option<Vec<u8>>, FFIError> {
-        serde_json::to_vec(&self.0)
-            .map_err(JsonError::ReturnSerialize)
-            .map_err(FFIError::JsonError)
-            .map(Some)
-    }
-}
-
-#[cfg(feature = "json_transport")]
-impl<'a, T> StrArg<'a> for Json<T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    fn from_arg(arg: &'a str) -> Result<Self, FFIError> {
-        let deserialized: T = serde_json::from_str(arg)
-            .map_err(JsonError::ArgDeserialize)
-            .map_err(FFIError::JsonError)?;
-        Ok(Json(deserialized))
-    }
-}
-
-#[cfg(feature = "json_transport")]
-#[derive(Debug)]
-pub enum JsonError {
-    ArgDeserialize(serde_json::Error),
-    ReturnSerialize(serde_json::Error),
-}
-
-#[cfg(feature = "json_transport")]
-impl Display for JsonError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{};", error_keys::CLASS_JSON)?;
-        match self {
-            JsonError::ArgDeserialize(err) => {
-                write!(f, "{};{}", error_keys::JSON_TYPE_DESERIALIZE, err)
-            }
-            JsonError::ReturnSerialize(err) => {
-                write!(f, "{};{}", error_keys::JSON_TYPE_SERIALIZE, err)
-            }
-        }
-    }
-}
-
-#[cfg(feature = "json_transport")]
-impl Error for JsonError {}
-
-#[cfg(feature = "json_transport")]
-impl From<JsonError> for FFIError {
-    fn from(e: JsonError) -> Self {
-        FFIError::JsonError(e)
     }
 }

@@ -45,8 +45,15 @@ fn fn_body_tokens(sig: &Signature) -> TokenStream {
 
     let min_args_i32 = min_args as i32;
     let max_args_i32 = max_args as i32;
+
+    let actual_check = if min_args == max_args {
+        quote! { argc != #min_args_i32 }
+    } else {
+        quote! { argc < #min_args_i32 || argc > #max_args_i32 }
+    };
+
     let range_check = quote! {
-        if argc < #min_args_i32  || argc > #max_args_i32 {
+        if #actual_check {
             return byond_fn::str_ffi::byond_return(byond_fn::str_ffi::TransportError::WrongArgCount {
                 expected_min: #min_args,
                 expected_max: #max_args,
